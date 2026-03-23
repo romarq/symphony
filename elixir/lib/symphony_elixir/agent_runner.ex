@@ -1,13 +1,28 @@
 defmodule SymphonyElixir.AgentRunner do
   @moduledoc """
-  Executes a single Linear issue in its workspace with Codex.
+  Executes a single Linear issue in its workspace with Codex or Claude Code.
   """
 
   require Logger
+  alias SymphonyElixir.Claude
   alias SymphonyElixir.Codex.AppServer
   alias SymphonyElixir.{Config, Linear.Issue, PromptBuilder, Tracker, Workspace}
 
   @type worker_host :: String.t() | nil
+
+  @spec resolve_agent_kind(map()) :: :claude | :codex
+  def resolve_agent_kind(issue) do
+    labels = Map.get(issue, :labels) || []
+    settings = Config.settings!()
+    routing = settings.agent.routing
+    default = settings.agent.default
+
+    cond do
+      routing.codex_label in labels -> :codex
+      routing.claude_label in labels -> :claude
+      true -> String.to_existing_atom(default)
+    end
+  end
 
   @spec run(map(), pid() | nil, keyword()) :: :ok | no_return()
   def run(issue, codex_update_recipient \\ nil, opts \\ []) do
@@ -35,7 +50,7 @@ defmodule SymphonyElixir.AgentRunner do
 
         try do
           with :ok <- Workspace.run_before_run_hook(workspace, issue, worker_host) do
-            run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host)
+            run_agent_turns(workspace, issue, codex_update_recipient, opts, worker_host)
           end
         after
           Workspace.run_after_run_hook(workspace, issue, worker_host)
@@ -76,16 +91,22 @@ defmodule SymphonyElixir.AgentRunner do
 
   defp send_worker_runtime_info(_recipient, _issue, _worker_host, _workspace), do: :ok
 
-  defp run_codex_turns(workspace, issue, codex_update_recipient, opts, worker_host) do
+  defp run_agent_turns(workspace, issue, update_recipient, opts, worker_host) do
     max_turns = Keyword.get(opts, :max_turns, Config.settings!().agent.max_turns)
     issue_state_fetcher = Keyword.get(opts, :issue_state_fetcher, &Tracker.fetch_issue_states_by_ids/1)
 
-    with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
-      try do
-        do_run_codex_turns(session, workspace, issue, codex_update_recipient, opts, issue_state_fetcher, 1, max_turns)
-      after
-        AppServer.stop_session(session)
-      end
+    case resolve_agent_kind(issue) do
+      :codex ->
+        with {:ok, session} <- AppServer.start_session(workspace, worker_host: worker_host) do
+          try do
+            do_run_codex_turns(session, workspace, issue, update_recipient, opts, issue_state_fetcher, 1, max_turns)
+          after
+            AppServer.stop_session(session)
+          end
+        end
+
+      :claude ->
+        run_claude_turn(workspace, issue, update_recipient, opts, issue_state_fetcher, 1, max_turns, nil)
     end
   end
 
@@ -130,13 +151,60 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
+  defp run_claude_turn(workspace, issue, update_recipient, opts, issue_state_fetcher, turn_number, max_turns, session_id) do
+    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+
+    case Claude.AppServer.run_turn(
+           workspace,
+           prompt,
+           issue,
+           on_message: codex_message_handler(update_recipient, issue),
+           session_id: session_id
+         ) do
+      {:ok, payload} ->
+        # Capture session_id from the result so subsequent turns resume the same session
+        next_session_id = payload[:session_id] || session_id
+
+        Logger.info("Completed Claude agent run for #{issue_context(issue)} session_id=#{next_session_id} turn=#{turn_number}/#{max_turns}")
+
+        case continue_with_issue?(issue, issue_state_fetcher) do
+          {:continue, refreshed_issue} when turn_number < max_turns ->
+            Logger.info("Continuing Claude agent run for #{issue_context(refreshed_issue)} turn=#{turn_number}/#{max_turns}")
+
+            run_claude_turn(
+              workspace,
+              refreshed_issue,
+              update_recipient,
+              opts,
+              issue_state_fetcher,
+              turn_number + 1,
+              max_turns,
+              next_session_id
+            )
+
+          {:continue, _refreshed_issue} ->
+            :ok
+
+          {:done, _refreshed_issue} ->
+            :ok
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, reason} ->
+        Logger.error("Claude agent run failed for #{issue_context(issue)}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
   defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
 
   defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
     """
     Continuation guidance:
 
-    - The previous Codex turn completed normally, but the Linear issue is still in an active state.
+    - The previous turn completed normally, but the Linear issue is still in an active state.
     - This is continuation turn ##{turn_number} of #{max_turns} for the current agent run.
     - Resume from the current workspace and workpad state instead of restarting from scratch.
     - The original task instructions and prior turn context are already present in this thread, so do not restate them before acting.

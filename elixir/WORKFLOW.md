@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  project_slug: "5417815e5b6a"
   active_states:
     - Todo
     - In Progress
@@ -26,8 +26,14 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
+  default: claude
   max_concurrent_agents: 10
   max_turns: 20
+  routing:
+    claude_label: claude
+    codex_label: codex
+claude:
+  model: claude-sonnet-4-6
 codex:
   command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
   approval_policy: never

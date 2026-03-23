@@ -1052,7 +1052,7 @@ defmodule SymphonyElixir.CoreTest do
         description: "Run and keep workspace",
         state: "In Progress",
         url: "https://example.org/issues/S-99",
-        labels: ["backend"]
+        labels: ["backend", "codex"]
       }
 
       before = MapSet.new(File.ls!(workspace_root))
@@ -1138,7 +1138,7 @@ defmodule SymphonyElixir.CoreTest do
         description: "Capture codex updates",
         state: "In Progress",
         url: "https://example.org/issues/MT-99",
-        labels: ["backend"]
+        labels: ["backend", "codex"]
       }
 
       test_pid = self()
@@ -1331,7 +1331,7 @@ defmodule SymphonyElixir.CoreTest do
         description: "Still active after first turn",
         state: "In Progress",
         url: "https://example.org/issues/MT-247",
-        labels: []
+        labels: ["codex"]
       }
 
       assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
@@ -1448,7 +1448,7 @@ defmodule SymphonyElixir.CoreTest do
         description: "Still active",
         state: "In Progress",
         url: "https://example.org/issues/MT-248",
-        labels: []
+        labels: ["codex"]
       }
 
       assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
@@ -1814,6 +1814,33 @@ defmodule SymphonyElixir.CoreTest do
              end)
     after
       File.rm_rf(test_root)
+    end
+  end
+
+  describe "resolve_agent_kind/1" do
+    test "routes to codex when issue has codex label" do
+      issue = %Issue{id: "1", identifier: "TEST-1", labels: ["codex", "bug"]}
+      assert AgentRunner.resolve_agent_kind(issue) == :codex
+    end
+
+    test "routes to claude when issue has claude label" do
+      issue = %Issue{id: "1", identifier: "TEST-1", labels: ["claude", "feature"]}
+      assert AgentRunner.resolve_agent_kind(issue) == :claude
+    end
+
+    test "defaults to claude when no matching label" do
+      issue = %Issue{id: "1", identifier: "TEST-1", labels: ["bug"]}
+      assert AgentRunner.resolve_agent_kind(issue) == :claude
+    end
+
+    test "defaults to claude when labels is nil" do
+      issue = %Issue{id: "1", identifier: "TEST-1", labels: nil}
+      assert AgentRunner.resolve_agent_kind(issue) == :claude
+    end
+
+    test "defaults to claude when labels is empty" do
+      issue = %Issue{id: "1", identifier: "TEST-1", labels: []}
+      assert AgentRunner.resolve_agent_kind(issue) == :claude
     end
   end
 end

@@ -124,6 +124,11 @@ defmodule SymphonyElixir.TestSupport do
           observability_render_interval_ms: 16,
           server_port: nil,
           server_host: nil,
+          agent_default: "claude",
+          agent_routing_claude_label: "claude",
+          agent_routing_codex_label: "codex",
+          claude_model: "claude-sonnet-4-6",
+          claude_max_budget_usd: nil,
           prompt: @workflow_prompt
         ],
         overrides
@@ -161,6 +166,11 @@ defmodule SymphonyElixir.TestSupport do
     observability_render_interval_ms = Keyword.get(config, :observability_render_interval_ms)
     server_port = Keyword.get(config, :server_port)
     server_host = Keyword.get(config, :server_host)
+    agent_default = Keyword.get(config, :agent_default)
+    agent_routing_claude_label = Keyword.get(config, :agent_routing_claude_label)
+    agent_routing_codex_label = Keyword.get(config, :agent_routing_codex_label)
+    claude_model = Keyword.get(config, :claude_model)
+    claude_max_budget_usd = Keyword.get(config, :claude_max_budget_usd)
     prompt = Keyword.get(config, :prompt)
 
     sections =
@@ -184,6 +194,10 @@ defmodule SymphonyElixir.TestSupport do
         "  max_turns: #{yaml_value(max_turns)}",
         "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
+        "  default: #{yaml_value(agent_default)}",
+        "  routing:",
+        "    claude_label: #{yaml_value(agent_routing_claude_label)}",
+        "    codex_label: #{yaml_value(agent_routing_codex_label)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",
         "  approval_policy: #{yaml_value(codex_approval_policy)}",
@@ -195,6 +209,7 @@ defmodule SymphonyElixir.TestSupport do
         hooks_yaml(hook_after_create, hook_before_run, hook_after_run, hook_before_remove, hook_timeout_ms),
         observability_yaml(observability_enabled, observability_refresh_ms, observability_render_interval_ms),
         server_yaml(server_port, server_host),
+        claude_yaml(claude_model, claude_max_budget_usd),
         "---",
         prompt
       ]
@@ -208,6 +223,7 @@ defmodule SymphonyElixir.TestSupport do
   end
 
   defp yaml_value(value) when is_integer(value), do: to_string(value)
+  defp yaml_value(value) when is_float(value), do: to_string(value)
   defp yaml_value(true), do: "true"
   defp yaml_value(false), do: "false"
   defp yaml_value(nil), do: "null"
@@ -272,6 +288,16 @@ defmodule SymphonyElixir.TestSupport do
       "server:",
       port && "  port: #{yaml_value(port)}",
       host && "  host: #{yaml_value(host)}"
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+  end
+
+  defp claude_yaml(model, max_budget_usd) do
+    [
+      "claude:",
+      "  model: #{yaml_value(model)}",
+      max_budget_usd && "  max_budget_usd: #{yaml_value(max_budget_usd)}"
     ]
     |> Enum.reject(&is_nil/1)
     |> Enum.join("\n")

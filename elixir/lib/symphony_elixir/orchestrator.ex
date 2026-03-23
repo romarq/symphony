@@ -237,6 +237,18 @@ defmodule SymphonyElixir.Orchestrator do
         Logger.error("Linear project slug missing in WORKFLOW.md")
         state
 
+      {:error, :missing_github_token} ->
+        Logger.error("GitHub token missing — set GITHUB_TOKEN or tracker.api_key in WORKFLOW.md")
+        state
+
+      {:error, :missing_project_owner} ->
+        Logger.error("GitHub project_owner missing in WORKFLOW.md")
+        state
+
+      {:error, :missing_project_number} ->
+        Logger.error("GitHub project_number missing in WORKFLOW.md")
+        state
+
       {:error, :missing_tracker_kind} ->
         Logger.error("Tracker kind missing in WORKFLOW.md")
 
@@ -1429,18 +1441,22 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp absolute_token_usage_from_payload(payload) when is_map(payload) do
-    absolute_paths = [
-      ["params", "msg", "payload", "info", "total_token_usage"],
-      [:params, :msg, :payload, :info, :total_token_usage],
-      ["params", "msg", "info", "total_token_usage"],
-      [:params, :msg, :info, :total_token_usage],
-      ["params", "tokenUsage", "total"],
-      [:params, :tokenUsage, :total],
-      ["tokenUsage", "total"],
-      [:tokenUsage, :total]
-    ]
+    if integer_token_map?(payload) do
+      payload
+    else
+      absolute_paths = [
+        ["params", "msg", "payload", "info", "total_token_usage"],
+        [:params, :msg, :payload, :info, :total_token_usage],
+        ["params", "msg", "info", "total_token_usage"],
+        [:params, :msg, :info, :total_token_usage],
+        ["params", "tokenUsage", "total"],
+        [:params, :tokenUsage, :total],
+        ["tokenUsage", "total"],
+        [:tokenUsage, :total]
+      ]
 
-    explicit_map_at_paths(payload, absolute_paths)
+      explicit_map_at_paths(payload, absolute_paths)
+    end
   end
 
   defp absolute_token_usage_from_payload(_payload), do: nil

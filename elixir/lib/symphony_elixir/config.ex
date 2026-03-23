@@ -83,6 +83,24 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec claude_settings() :: map()
+  def claude_settings do
+    claude = settings!().claude
+
+    %{
+      model: claude.model,
+      fallback_model: claude.fallback_model,
+      max_budget_usd: claude.max_budget_usd,
+      max_turns: claude.max_turns,
+      permission_mode: claude.permission_mode,
+      allowed_tools: claude.allowed_tools,
+      disallowed_tools: claude.disallowed_tools,
+      system_prompt: claude.system_prompt,
+      turn_timeout_ms: claude.turn_timeout_ms,
+      stall_timeout_ms: claude.stall_timeout_ms
+    }
+  end
+
   @spec server_port() :: non_neg_integer() | nil
   def server_port do
     case Application.get_env(:symphony_elixir, :server_port_override) do
@@ -119,7 +137,7 @@ defmodule SymphonyElixir.Config do
       is_nil(settings.tracker.kind) ->
         {:error, :missing_tracker_kind}
 
-      settings.tracker.kind not in ["linear", "memory"] ->
+      settings.tracker.kind not in ["linear", "memory", "github_project"] ->
         {:error, {:unsupported_tracker_kind, settings.tracker.kind}}
 
       settings.tracker.kind == "linear" and not is_binary(settings.tracker.api_key) ->
@@ -127,6 +145,15 @@ defmodule SymphonyElixir.Config do
 
       settings.tracker.kind == "linear" and not is_binary(settings.tracker.project_slug) ->
         {:error, :missing_linear_project_slug}
+
+      settings.tracker.kind == "github_project" and not is_binary(settings.tracker.api_key) ->
+        {:error, :missing_github_token}
+
+      settings.tracker.kind == "github_project" and not is_binary(settings.tracker.project_owner) ->
+        {:error, :missing_project_owner}
+
+      settings.tracker.kind == "github_project" and not is_integer(settings.tracker.project_number) ->
+        {:error, :missing_project_number}
 
       true ->
         :ok
