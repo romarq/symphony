@@ -13,15 +13,21 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 ## How it works
 
-1. Polls Linear for candidate work
+1. Polls a tracker (Linear or GitHub Projects V2) for candidate work
 2. Creates a workspace per issue
-3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
-   workspace
-4. Sends a workflow prompt to Codex
-5. Keeps Codex working on the issue until the work is done
+3. Launches an agent (Claude Code or Codex) inside the workspace
+4. Sends a workflow prompt to the agent
+5. Keeps the agent working on the issue until the work is done
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+Supports two agent backends:
+- **Claude Code** (default) — spawns the `claude` CLI with streaming JSON events
+- **Codex** — uses the Codex App Server protocol
+
+Supports two issue trackers:
+- **Linear** — polls a Linear project for issues
+- **GitHub Projects V2** — polls a GitHub kanban board for issues
+
+Issues are routed to agents by label (`claude` or `codex` labels), with a configurable default.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -150,6 +156,153 @@ codex:
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+
+## Using GitHub Projects V2 with Claude Code
+
+Symphony can use a GitHub Projects V2 kanban board instead of Linear, with Claude Code as the agent.
+Issues are tracked by their kanban column (the "Status" field), not by GitHub's open/closed state.
+
+### Quick start
+
+```bash
+cd symphony/elixir
+mise trust && mise install
+mise exec -- mix setup
+
+# Ensure gh CLI has project scopes
+gh auth refresh -s read:project -s project
+
+# Run with the included script
+./run-github.sh
+```
+
+The script auto-detects your GitHub token from `gh auth token`, validates prerequisites, and starts
+Symphony with `WORKFLOW.github.md`.
+
+### Setup
+
+1. **Create a GitHub Projects V2 board** at `https://github.com/users/<you>/projects` (or org-level).
+   Add columns matching your workflow states (e.g., `Ready`, `In progress`, `In review`, `Done`).
+
+2. **Install the `claude` CLI** and authenticate it (see [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)).
+
+3. **Grant `gh` CLI project access:**
+
+   ```bash
+   gh auth refresh -s read:project -s project
+   ```
+
+4. **Create `WORKFLOW.github.md`** (or edit the included one):
+
+   ```md
+   ---
+   tracker:
+     kind: github_project
+     project_owner: your-username       # GitHub user or org that owns the project
+     project_number: 1                  # project number from the URL
+     repository: your-username/your-repo # optional — filter to issues from one repo
+     status_field_name: Status          # name of the single-select kanban field
+     active_states:
+       - Ready
+       - In progress
+     terminal_states:
+       - Done
+       - In review
+   polling:
+     interval_ms: 5000
+   workspace:
+     root: ~/code/symphony-workspaces
+   hooks:
+     after_create: |
+       git clone --depth 1 https://github.com/your-username/your-repo .
+       git config credential.helper '!gh auth git-credential'
+       git config user.name "Symphony Agent"
+       git config user.email "symphony@noreply.github.com"
+   agent:
+     default: claude
+     max_concurrent_agents: 1
+     max_turns: 5
+     routing:
+       claude_label: claude
+       codex_label: codex
+   claude:
+     model: claude-sonnet-4-6
+   ---
+
+   You are working on GitHub issue {{ issue.identifier }}.
+   ...
+   ```
+
+5. **Enable the web dashboard** (optional) by adding `server.port` to the WORKFLOW config:
+
+   ```yaml
+   server:
+     port: 8080
+   ```
+
+6. **Run Symphony:**
+
+   ```bash
+   # Option A: use the helper script (auto-detects GITHUB_TOKEN)
+   ./run-github.sh
+
+   # Option B: run manually
+   GITHUB_TOKEN=$(gh auth token) mise exec -- mix run --no-start -e '
+     Application.put_env(:symphony_elixir, :workflow_file_path, Path.expand("WORKFLOW.github.md"))
+     {:ok, _} = Application.ensure_all_started(:symphony_elixir)
+     Process.sleep(:infinity)
+   '
+   ```
+
+   To follow logs in a second terminal: `./run-github.sh --logs`
+
+7. **Move an issue to "Ready"** on your kanban board. Symphony will pick it up, create a workspace,
+   run the Claude agent, and move it to "In review" when finished.
+
+### Issue lifecycle
+
+The expected kanban columns and their roles:
+
+| Column | Who moves here | Meaning |
+|--------|---------------|---------|
+| **Ready** | Human | Issue is queued for the agent |
+| **In progress** | Agent | Agent is actively working |
+| **In review** | Agent | Agent is finished, awaiting human review |
+| **Done** | Human | Human accepted the result |
+
+- The agent picks up issues in **Ready** or **In progress** (active states).
+- When done, the agent moves the issue to **In review** and stops.
+- A human reviews and either moves to **Done** (accepted) or back to **In progress** (rework needed).
+- If moved back to **In progress**, the agent picks it up again and reads review comments for feedback.
+
+### GitHub tracker configuration reference
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `tracker.kind` | yes | — | Must be `github_project` |
+| `tracker.project_owner` | yes | — | GitHub username or org owning the project |
+| `tracker.project_number` | yes | — | Project number (from the project URL) |
+| `tracker.repository` | no | all repos | Filter to issues from a specific `owner/repo` |
+| `tracker.status_field_name` | no | `Status` | Name of the single-select kanban column field |
+| `tracker.api_key` | no | `GITHUB_TOKEN` or `GH_TOKEN` env | GitHub personal access token |
+| `tracker.active_states` | no | `["Todo", "In Progress"]` | Column names that trigger agent dispatch |
+| `tracker.terminal_states` | no | `["Closed", "Cancelled", ...]` | Column names that stop agents |
+| `tracker.assignee` | no | all | Filter to issues assigned to a user (`me` or a login) |
+
+### Claude Code agent configuration reference
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `claude.model` | no | `claude-sonnet-4-6` | Claude model to use |
+| `claude.fallback_model` | no | — | Fallback model when primary is overloaded |
+| `claude.max_budget_usd` | no | — | Cost cap per agent turn |
+| `claude.max_turns` | no | — | Max internal turns per CLI invocation |
+| `claude.permission_mode` | no | `bypassPermissions` | Permission mode for the CLI |
+| `claude.allowed_tools` | no | all | List of tools to allow |
+| `claude.disallowed_tools` | no | none | List of tools to block |
+| `claude.system_prompt` | no | — | Custom system prompt (appended to defaults) |
+| `claude.turn_timeout_ms` | no | `3600000` | Absolute turn deadline (ms) |
+| `claude.stall_timeout_ms` | no | `300000` | Kill agent if no events for this long (ms) |
 
 ## Web dashboard
 
