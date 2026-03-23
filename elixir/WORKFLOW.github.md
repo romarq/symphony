@@ -3,7 +3,6 @@ tracker:
   kind: github_project
   project_owner: RomarQ
   project_number: 1
-  repository: RomarQ/the-forge
   status_field_name: Status
   active_states:
     - Ready
@@ -70,15 +69,37 @@ If the issue is already `In progress` when you start (e.g. sent back from review
 1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
 2. Only stop early for a true blocker (missing required auth/permissions/secrets).
 3. Move the issue to `In progress` on the project board immediately when you start.
-4. Do the work described in the issue thoroughly. Read code, make changes, run tests as needed.
-5. If you make code changes:
+4. Post a **progress comment** on the issue right away (see format below). Update this same comment as you work — it is the primary way the user tracks what you are doing.
+5. Do the work described in the issue thoroughly. Read code, make changes, run tests as needed.
+6. Update the progress comment after each significant milestone (e.g. analysis done, changes committed, tests passing, PR opened).
+7. If you make code changes:
    - Create a branch named after the issue (e.g. `the-forge-4-find-improvements`)
    - Commit your changes with clear messages
    - Push the branch and open a pull request with `gh pr create`
    - Link the PR to the issue by mentioning `Closes #<number>` in the PR body
-6. Post a comment on the GitHub issue summarizing what you did and any findings. Include the PR link if one was created.
-7. **Only after** the comment is posted, move the issue to `In review` on the project board. Never move it to `Done`.
+8. Finalize the progress comment with a summary of what was done and any findings. Include the PR link if one was created.
+9. **Only after** the comment is finalized, move the issue to `In review` on the project board. Never move it to `Done`.
 
-IMPORTANT: Always post a comment before moving to `In review`. The comment is the deliverable — moving the column without a comment means nothing was delivered.
+IMPORTANT: Always post and update the progress comment throughout your work. It is the primary feedback mechanism for the user watching the issue.
 
 Work only in the provided repository copy. Do not touch any other path.
+
+## Progress comment format
+
+Post this as the first comment when you start, then edit it in-place as you progress. Use `gh issue comment` to create and `gh api` to update.
+
+```md
+## Agent Progress
+
+**Status:** 🔄 Working
+
+### Plan
+- [ ] Step 1
+- [ ] Step 2
+
+### Log
+- `HH:MM` — Started working on the issue
+- `HH:MM` — ...
+```
+
+When finished, update the status line to `✅ Done` and check off completed items. If blocked, use `🚫 Blocked — <reason>`.
