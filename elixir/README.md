@@ -184,7 +184,39 @@ Symphony with `WORKFLOW.github.md`.
 1. **Create a GitHub Projects V2 board** at `https://github.com/users/<you>/projects` (or org-level).
    Add columns matching your workflow states (e.g., `Ready`, `In progress`, `In review`, `Done`).
 
-2. **Install the `claude` CLI** and authenticate it (see [Claude Code docs](https://docs.anthropic.com/en/docs/claude-code)).
+2. **Install the `claude` CLI** and authenticate it.
+
+   Claude Code supports two authentication methods:
+
+   - **Interactive login** (local machine with a browser):
+
+     ```bash
+     claude auth login
+     ```
+
+     This stores credentials in the system keychain. Spawned agents inherit them automatically.
+
+   - **Long-lived token** (servers, CI, headless environments):
+
+     ```bash
+     claude setup-token
+     ```
+
+     This generates a token tied to your Claude subscription (Max/Pro). Export it as an
+     environment variable before starting Symphony:
+
+     ```bash
+     export CLAUDE_CODE_OAUTH_TOKEN="your-token-here"
+     ```
+
+     The spawned `claude` processes will pick it up automatically. This is the recommended
+     approach for unattended deployments where no browser is available.
+
+   Alternatively, you can use an Anthropic API key (pay-per-use, no subscription required):
+
+   ```bash
+   export ANTHROPIC_API_KEY="sk-ant-..."
+   ```
 
 3. **Grant `gh` CLI project access:**
 

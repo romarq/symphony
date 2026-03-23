@@ -13,8 +13,10 @@
 #       gh auth refresh -s read:project -s project
 #   - claude CLI installed and authenticated
 #
-# Environment variables (optional — auto-detected from gh if not set):
-#   GITHUB_TOKEN   GitHub personal access token (falls back to `gh auth token`)
+# Environment variables (optional):
+#   GITHUB_TOKEN              GitHub personal access token (falls back to `gh auth token`)
+#   CLAUDE_CODE_OAUTH_TOKEN   Claude subscription token (from `claude setup-token`)
+#   ANTHROPIC_API_KEY         Anthropic API key (alternative to OAuth token)
 #
 set -euo pipefail
 
