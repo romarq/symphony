@@ -69,37 +69,79 @@ If the issue is already `In progress` when you start (e.g. sent back from review
 1. This is an unattended orchestration session. Never ask a human to perform follow-up actions.
 2. Only stop early for a true blocker (missing required auth/permissions/secrets).
 3. Move the issue to `In progress` on the project board immediately when you start.
-4. Post a **progress comment** on the issue right away (see format below). Update this same comment as you work — it is the primary way the user tracks what you are doing.
+4. Post a **progress comment** on the issue (see "Progress comment" section below). Save the comment ID — you will update this same comment throughout your work.
 5. Do the work described in the issue thoroughly. Read code, make changes, run tests as needed.
 6. Update the progress comment after each significant milestone (e.g. analysis done, changes committed, tests passing, PR opened).
-7. If you make code changes:
-   - Create a branch named after the issue (e.g. `the-forge-4-find-improvements`)
-   - Commit your changes with clear messages
-   - Push the branch and open a pull request with `gh pr create`
-   - Link the PR to the issue by mentioning `Closes #<number>` in the PR body
-8. Finalize the progress comment with a summary of what was done and any findings. Include the PR link if one was created.
+7. If you make code changes, follow the "Pull requests" section below.
+8. Finalize the progress comment with a summary of what was done. Include the PR link if one was created.
 9. **Only after** the comment is finalized, move the issue to `In review` on the project board. Never move it to `Done`.
-
-IMPORTANT: Always post and update the progress comment throughout your work. It is the primary feedback mechanism for the user watching the issue.
 
 Work only in the provided repository copy. Do not touch any other path.
 
-## Progress comment format
+## Progress comment
 
-Post this as the first comment when you start, then edit it in-place as you progress. Use `gh issue comment` to create and `gh api` to update.
+Post a comment when you start, then **edit that same comment** as you progress. Never post multiple progress comments — always update the original.
 
-```md
-## Agent Progress
+To create the initial comment and capture its ID:
+
+```bash
+COMMENT_URL=$(gh issue comment <NUMBER> -R <OWNER/REPO> --body "## Agent Progress
 
 **Status:** 🔄 Working
 
 ### Plan
-- [ ] Step 1
-- [ ] Step 2
+- [ ] Analyze the issue
+- [ ] Implement changes
+- [ ] Verify and test
 
 ### Log
-- `HH:MM` — Started working on the issue
-- `HH:MM` — ...
+- \`$(date +%H:%M)\` — Started working" 2>&1 | grep -o 'https://[^ ]*')
+
+COMMENT_ID=$(echo "$COMMENT_URL" | grep -o '[0-9]*$')
 ```
 
-When finished, update the status line to `✅ Done` and check off completed items. If blocked, use `🚫 Blocked — <reason>`.
+To update the comment in-place:
+
+```bash
+gh api repos/<OWNER/REPO>/issues/comments/$COMMENT_ID -X PATCH -f body="## Agent Progress
+
+**Status:** 🔄 Working
+
+### Plan
+- [x] Analyze the issue
+- [ ] Implement changes
+- [ ] Verify and test
+
+### Log
+- \`14:00\` — Started working
+- \`14:05\` — Analysis complete, found 3 issues
+- \`14:15\` — Implementing fixes..."
+```
+
+When finished, set status to `✅ Done` and check off all items. If blocked, use `🚫 Blocked — <reason>`.
+
+## Pull requests
+
+Before creating a PR, always check if one already exists for this issue:
+
+```bash
+# Check for existing PRs from this repo
+EXISTING_PR=$(gh pr list -R <OWNER/REPO> --head "<BRANCH_NAME>" --json number --jq '.[0].number' 2>/dev/null)
+```
+
+If a PR exists, push to the same branch and it will update automatically. Only create a new PR if none exists.
+
+When creating a PR, always target the same repository (never the upstream parent):
+
+```bash
+git checkout -b <BRANCH_NAME>
+# ... make changes, commit ...
+git push -u origin <BRANCH_NAME>
+gh pr create -R <OWNER/REPO> --head <BRANCH_NAME> --base main \
+  --title "Short title" --body "Closes #<NUMBER>"
+```
+
+IMPORTANT:
+- Always pass `-R <OWNER/REPO>` to `gh pr create` to ensure it targets the correct repository.
+- Always pass `--base main` to ensure it targets the main branch, not an upstream fork.
+- Check for existing PRs and branches before creating new ones.
