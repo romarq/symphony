@@ -218,11 +218,21 @@ Symphony with `WORKFLOW.github.md`.
    export ANTHROPIC_API_KEY="sk-ant-..."
    ```
 
-3. **Grant `gh` CLI project access:**
+3. **Authenticate the `gh` CLI** with the required scopes:
 
    ```bash
-   gh auth refresh -s read:project -s project
+   gh auth login
+   gh auth refresh -s project
    ```
+
+   Required token scopes:
+
+   | Scope | Purpose |
+   |-------|---------|
+   | `repo` | Clone repos, push branches, create PRs, post comments |
+   | `project` | Read/write GitHub Projects V2 board (move columns) |
+
+   Verify with `gh auth status` — token scopes should include `repo` and `project`.
 
 4. **Create `WORKFLOW.github.md`** (or edit the included one):
 
