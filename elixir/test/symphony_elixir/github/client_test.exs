@@ -27,6 +27,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
     repo = Keyword.get(opts, :repo, "TestOwner/test-repo")
     assignees = Keyword.get(opts, :assignees, [])
     labels = Keyword.get(opts, :labels, [])
+    github_state = Keyword.get(opts, :github_state, "OPEN")
 
     %{
       "id" => "PVTI_#{id}",
@@ -41,7 +42,7 @@ defmodule SymphonyElixir.GitHub.ClientTest do
         "number" => number,
         "title" => title,
         "body" => body,
-        "state" => "OPEN",
+        "state" => github_state,
         "url" => "https://github.com/#{repo}/issues/#{number}",
         "assignees" => %{"nodes" => Enum.map(assignees, &%{"login" => &1})},
         "labels" => %{"nodes" => Enum.map(labels, &%{"name" => &1})},
@@ -219,6 +220,18 @@ defmodule SymphonyElixir.GitHub.ClientTest do
       {:ok, dt, _} = DateTime.from_iso8601(created)
       assert dt.year == 2026
       assert dt.month == 3
+    end
+
+    test "skips closed GitHub issues even if board column is active" do
+      item_open = make_project_item("1", 1, "Open issue", "B", "Ready")
+      item_closed = make_project_item("2", 2, "Closed issue", "B", "Ready", github_state: "CLOSED")
+
+      filtered =
+        [item_open, item_closed]
+        |> Enum.reject(fn item -> item["content"]["state"] == "CLOSED" end)
+
+      assert length(filtered) == 1
+      assert get_in(hd(filtered), ["content", "number"]) == 1
     end
 
     test "filters by repository when configured" do
