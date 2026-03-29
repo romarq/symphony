@@ -18,13 +18,12 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/RomarQ/the-forge .
     git config credential.helper '!gh auth git-credential'
     git config user.name "Symphony Agent"
     git config user.email "symphony@noreply.github.com"
 agent:
   default: claude
-  max_concurrent_agents: 1
+  max_concurrent_agents: 5
   max_turns: 5
   routing:
     claude_label: claude
