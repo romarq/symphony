@@ -141,7 +141,28 @@ gh pr create -R <OWNER/REPO> --head <BRANCH_NAME> --base main \
   --title "Short title" --body "Closes #<NUMBER>"
 ```
 
+### Push permission denied — fork and PR
+
+If `git push` fails with a permission error (e.g. the workspace was cloned from a repo where you don't have write access), fork the repo and open a PR from the fork:
+
+```bash
+# Fork the repo under your GitHub account
+gh repo fork <OWNER/REPO> --clone=false
+
+# Add the fork as a remote
+FORK_OWNER=$(gh api user --jq '.login')
+git remote add fork "https://github.com/$FORK_OWNER/<REPO>.git"
+
+# Push to the fork
+git push fork <BRANCH_NAME>
+
+# Open a PR from the fork against the upstream repo
+gh pr create --repo <OWNER/REPO> --head "$FORK_OWNER:<BRANCH_NAME>" --base main \
+  --title "Short title" --body "Closes #<NUMBER>"
+```
+
 IMPORTANT:
 - Always pass `-R <OWNER/REPO>` to `gh pr create` to ensure it targets the correct repository.
 - Always pass `--base main` to ensure it targets the main branch, not an upstream fork.
 - Check for existing PRs and branches before creating new ones.
+- If push is denied, always fork and open a PR from the fork rather than stopping.
