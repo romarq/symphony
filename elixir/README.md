@@ -1,326 +1,209 @@
 # Symphony Elixir
 
-This directory contains the current Elixir/OTP implementation of Symphony, based on
-[`SPEC.md`](../SPEC.md) at the repository root.
+An Elixir/OTP orchestrator that connects a GitHub Projects V2 kanban board to AI coding agents. Symphony polls your board for issues, spins up isolated workspaces, and runs [Claude Code](https://docs.anthropic.com/en/docs/claude-code) or [Codex](https://github.com/openai/codex) against each one — moving cards across columns as work progresses.
+
+Based on [`SPEC.md`](../SPEC.md) at the repository root.
 
 > [!WARNING]
 > Symphony Elixir is prototype software intended for evaluation only and is presented as-is.
 > We recommend implementing your own hardened version based on `SPEC.md`.
 
-## Screenshot
-
 ![Symphony Elixir screenshot](../.github/media/elixir-screenshot.png)
 
 ## How it works
 
-1. Polls a tracker (Linear or GitHub Projects V2) for candidate work
-2. Creates a workspace per issue
+1. Polls a GitHub Projects V2 board for issues in active columns (e.g., **Ready**, **In progress**)
+2. Creates an isolated workspace per issue
 3. Launches an agent (Claude Code or Codex) inside the workspace
-4. Sends a workflow prompt to the agent
-5. Keeps the agent working on the issue until the work is done
+4. Sends a workflow prompt — built from your `WORKFLOW.github.md` template — to the agent
+5. Monitors the agent until the work is done, then moves the issue forward (e.g., to **In review**)
 
-Supports two agent backends:
-- **Claude Code** (default) — spawns the `claude` CLI with streaming JSON events
-- **Codex** — uses the Codex App Server protocol
+Issues are routed to agents by label (`claude` or `codex`), with a configurable default. If an issue moves to a terminal state (**Done**, **Closed**, **Cancelled**, or **Duplicate**), Symphony stops the active agent and cleans up the workspace.
 
-Supports two issue trackers:
-- **Linear** — polls a Linear project for issues
-- **GitHub Projects V2** — polls a GitHub kanban board for issues
-
-Issues are routed to agents by label (`claude` or `codex` labels), with a configurable default.
-
-If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
-Symphony stops the active agent for that issue and cleans up matching workspaces.
-
-## How to use it
-
-1. Make sure your codebase is set up to work well with agents: see
-   [Harness engineering](https://openai.com/index/harness-engineering/).
-2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
-3. Copy this directory's `WORKFLOW.md` to your repo.
-4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
-     operations such as comment editing or upload flows.
-5. Customize the copied `WORKFLOW.md` file for your project.
-   - To get your project's slug, right-click the project and copy its URL. The slug is part of the
-     URL.
-   - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
-     Team Settings → Workflow in Linear.
-6. Follow the instructions below to install the required runtime dependencies and start the service.
-
-## Prerequisites
-
-We recommend using [mise](https://mise.jdx.dev/) to manage Elixir/Erlang versions.
-
-```bash
-mise install
-mise exec -- elixir --version
-```
-
-## Run
+## Quick start
 
 ```bash
 git clone https://github.com/openai/symphony
 cd symphony/elixir
-mise trust
-mise install
+
+# Install Erlang & Elixir via mise
+mise trust && mise install
+
+# Fetch deps and build the escript
 mise exec -- mix setup
 mise exec -- mix build
-mise exec -- ./bin/symphony ./WORKFLOW.md
+
+# Authenticate GitHub with the required scopes
+gh auth login
+gh auth refresh -s project
+
+# Launch Symphony (auto-detects GITHUB_TOKEN from gh CLI)
+./run-github.sh
 ```
 
-## Configuration
+> [!TIP]
+> `run-github.sh` validates prerequisites, resolves your GitHub token, and starts Symphony
+> with `WORKFLOW.github.md`. Pass a custom path as the first argument:
+> `./run-github.sh /path/to/MY_WORKFLOW.md`
 
-Pass a custom workflow file path to `./bin/symphony` when starting the service:
+## Prerequisites
+
+| Dependency | Purpose | Install |
+|---|---|---|
+| [mise](https://mise.jdx.dev/) | Manages Erlang 28 + Elixir 1.19 | `curl https://mise.run \| sh` |
+| `libssl-dev` | Required for Erlang's `:crypto` module | `apt install libssl-dev` / `brew install openssl` |
+| [gh CLI](https://cli.github.com/) | GitHub authentication and API access | `apt install gh` / `brew install gh` |
+| [claude CLI](https://docs.anthropic.com/en/docs/claude-code) | Claude Code agent backend | `npm install -g @anthropic-ai/claude-code` |
+
+After installing system dependencies, run:
 
 ```bash
-./bin/symphony /path/to/custom/WORKFLOW.md
+mise trust
+mise install
+mise exec -- elixir --version   # verify Elixir 1.19.x
 ```
 
-If no path is passed, Symphony defaults to `./WORKFLOW.md`.
+## Setup
 
-Optional flags:
+### 1. Create a GitHub Projects V2 board
 
-- `--logs-root` tells Symphony to write logs under a different directory (default: `./log`)
-- `--port` also starts the Phoenix observability service (default: disabled)
+Go to `https://github.com/users/<you>/projects` (or org-level) and create a project. Add columns matching your workflow states:
 
-The `WORKFLOW.md` file uses YAML front matter for configuration, plus a Markdown body used as the
-Codex session prompt.
+| Column | Who moves here | Meaning |
+|---|---|---|
+| **Ready** | Human | Issue is queued for the agent |
+| **In progress** | Agent | Agent is actively working |
+| **In review** | Agent | Agent finished, awaiting human review |
+| **Done** | Human | Human accepted the result |
 
-Minimal example:
+### 2. Authenticate Claude Code
+
+Claude Code supports two authentication methods:
+
+- **Interactive login** (local machine with a browser):
+
+  ```bash
+  claude auth login
+  ```
+
+- **Long-lived token** (servers, CI, headless environments):
+
+  ```bash
+  claude setup-token
+  export CLAUDE_CODE_OAUTH_TOKEN="your-token-here"
+  ```
+
+Alternatively, use an Anthropic API key (pay-per-use, no subscription required):
+
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+```
+
+### 3. Authenticate the `gh` CLI
+
+```bash
+gh auth login
+gh auth refresh -s project
+```
+
+Required token scopes:
+
+| Scope | Purpose |
+|---|---|
+| `repo` | Clone repos, push branches, create PRs, post comments |
+| `project` | Read/write GitHub Projects V2 board (move columns) |
+
+Verify with `gh auth status` — token scopes should include `repo` and `project`.
+
+### 4. Configure the workflow
+
+Edit `WORKFLOW.github.md` (or create your own). The file uses YAML front matter for configuration, plus a Markdown body used as the agent session prompt.
 
 ```md
 ---
 tracker:
-  kind: linear
-  project_slug: "..."
+  kind: github_project
+  project_owner: your-username       # GitHub user or org that owns the project
+  project_number: 1                  # project number from the URL
+  repository: your-username/your-repo # optional — filter to issues from one repo
+  status_field_name: Status          # name of the single-select kanban field
+  active_states:
+    - Ready
+    - In progress
+  terminal_states:
+    - Done
+    - In review
+polling:
+  interval_ms: 5000
 workspace:
-  root: ~/code/workspaces
+  root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone git@github.com:your-org/your-repo.git .
+    git clone --depth 1 https://github.com/your-username/your-repo .
+    git config credential.helper '!gh auth git-credential'
+    git config user.name "Symphony Agent"
+    git config user.email "symphony@noreply.github.com"
 agent:
-  max_concurrent_agents: 10
-  max_turns: 20
-codex:
-  command: codex app-server
+  default: claude
+  max_concurrent_agents: 1
+  max_turns: 5
+  routing:
+    claude_label: claude
+    codex_label: codex
+claude:
+  model: claude-sonnet-4-6
 ---
 
-You are working on a Linear issue {{ issue.identifier }}.
+You are working on GitHub issue {{ issue.identifier }}.
 
-Title: {{ issue.title }} Body: {{ issue.description }}
+Title: {{ issue.title }}
+Body: {{ issue.description }}
 ```
 
-Notes:
-
-- If a value is missing, defaults are used.
-- Safer Codex defaults are used when policy fields are omitted:
-  - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
-  - `codex.thread_sandbox` defaults to `workspace-write`
-  - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
-- Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
-- Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
-- When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
-  unchanged. Compatibility then depends on the targeted Codex app-server version rather than local
-  Symphony validation.
-- `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
-  invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
-- If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
-  identifier, title, and body.
-- Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
-  `git clone ... .` there, along with any other setup commands you need.
-- If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
-  the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
-- `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
-- For path values, `~` is expanded to the home directory.
-- For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
-  while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
-  launched shell.
-
-```yaml
-tracker:
-  api_key: $LINEAR_API_KEY
-workspace:
-  root: $SYMPHONY_WORKSPACE_ROOT
-hooks:
-  after_create: |
-    git clone --depth 1 "$SOURCE_REPO_URL" .
-codex:
-  command: "$CODEX_BIN app-server --model gpt-5.3-codex"
-```
-
-- If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
-- If a later reload fails, Symphony keeps running with the last known good workflow and logs the
-  reload error until the file is fixed.
-- `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
-
-## Using GitHub Projects V2 with Claude Code
-
-Symphony can use a GitHub Projects V2 kanban board instead of Linear, with Claude Code as the agent.
-Issues are tracked by their kanban column (the "Status" field), not by GitHub's open/closed state.
-
-### Quick start
+### 5. Run Symphony
 
 ```bash
-cd symphony/elixir
-mise trust && mise install
-mise exec -- mix setup
-
-# Ensure gh CLI has project scopes
-gh auth refresh -s read:project -s project
-
-# Run with the included script
+# Option A: helper script (recommended)
 ./run-github.sh
+
+# Option B: manual
+GITHUB_TOKEN=$(gh auth token) mise exec -- mix run --no-start -e '
+  Application.put_env(:symphony_elixir, :workflow_file_path, Path.expand("WORKFLOW.github.md"))
+  {:ok, _} = Application.ensure_all_started(:symphony_elixir)
+  Process.sleep(:infinity)
+'
 ```
 
-The script auto-detects your GitHub token from `gh auth token`, validates prerequisites, and starts
-Symphony with `WORKFLOW.github.md`.
+To follow logs in a second terminal:
 
-### Setup
+```bash
+./run-github.sh --logs
+```
 
-1. **Create a GitHub Projects V2 board** at `https://github.com/users/<you>/projects` (or org-level).
-   Add columns matching your workflow states (e.g., `Ready`, `In progress`, `In review`, `Done`).
+### 6. Start working
 
-2. **Install the `claude` CLI** and authenticate it.
+Move an issue to **Ready** on your kanban board. Symphony picks it up, creates a workspace, runs the agent, and moves the issue to **In review** when finished.
 
-   Claude Code supports two authentication methods:
+To request rework, move the issue back to **In progress** — the agent picks it up again and reads review comments for feedback.
 
-   - **Interactive login** (local machine with a browser):
+## Configuration reference
 
-     ```bash
-     claude auth login
-     ```
+### CLI flags
 
-     This stores credentials in the system keychain. Spawned agents inherit them automatically.
+```
+./bin/symphony [--logs-root <path>] [--port <port>] [path-to-WORKFLOW.md]
+```
 
-   - **Long-lived token** (servers, CI, headless environments):
+| Flag | Default | Description |
+|---|---|---|
+| `--logs-root` | `./log` | Directory for log files |
+| `--port` | disabled | Start the Phoenix web dashboard on this port |
+| *(positional)* | `./WORKFLOW.md` | Path to the workflow file |
 
-     ```bash
-     claude setup-token
-     ```
-
-     This generates a token tied to your Claude subscription (Max/Pro). Export it as an
-     environment variable before starting Symphony:
-
-     ```bash
-     export CLAUDE_CODE_OAUTH_TOKEN="your-token-here"
-     ```
-
-     The spawned `claude` processes will pick it up automatically. This is the recommended
-     approach for unattended deployments where no browser is available.
-
-   Alternatively, you can use an Anthropic API key (pay-per-use, no subscription required):
-
-   ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."
-   ```
-
-3. **Authenticate the `gh` CLI** with the required scopes:
-
-   ```bash
-   gh auth login
-   gh auth refresh -s project
-   ```
-
-   Required token scopes:
-
-   | Scope | Purpose |
-   |-------|---------|
-   | `repo` | Clone repos, push branches, create PRs, post comments |
-   | `project` | Read/write GitHub Projects V2 board (move columns) |
-
-   Verify with `gh auth status` — token scopes should include `repo` and `project`.
-
-4. **Create `WORKFLOW.github.md`** (or edit the included one):
-
-   ```md
-   ---
-   tracker:
-     kind: github_project
-     project_owner: your-username       # GitHub user or org that owns the project
-     project_number: 1                  # project number from the URL
-     repository: your-username/your-repo # optional — filter to issues from one repo
-     status_field_name: Status          # name of the single-select kanban field
-     active_states:
-       - Ready
-       - In progress
-     terminal_states:
-       - Done
-       - In review
-   polling:
-     interval_ms: 5000
-   workspace:
-     root: ~/code/symphony-workspaces
-   hooks:
-     after_create: |
-       git clone --depth 1 https://github.com/your-username/your-repo .
-       git config credential.helper '!gh auth git-credential'
-       git config user.name "Symphony Agent"
-       git config user.email "symphony@noreply.github.com"
-   agent:
-     default: claude
-     max_concurrent_agents: 1
-     max_turns: 5
-     routing:
-       claude_label: claude
-       codex_label: codex
-   claude:
-     model: claude-sonnet-4-6
-   ---
-
-   You are working on GitHub issue {{ issue.identifier }}.
-   ...
-   ```
-
-5. **Enable the web dashboard** (optional) by adding `server.port` to the WORKFLOW config:
-
-   ```yaml
-   server:
-     port: 8080
-   ```
-
-6. **Run Symphony:**
-
-   ```bash
-   # Option A: use the helper script (auto-detects GITHUB_TOKEN)
-   ./run-github.sh
-
-   # Option B: run manually
-   GITHUB_TOKEN=$(gh auth token) mise exec -- mix run --no-start -e '
-     Application.put_env(:symphony_elixir, :workflow_file_path, Path.expand("WORKFLOW.github.md"))
-     {:ok, _} = Application.ensure_all_started(:symphony_elixir)
-     Process.sleep(:infinity)
-   '
-   ```
-
-   To follow logs in a second terminal: `./run-github.sh --logs`
-
-7. **Move an issue to "Ready"** on your kanban board. Symphony will pick it up, create a workspace,
-   run the Claude agent, and move it to "In review" when finished.
-
-### Issue lifecycle
-
-The expected kanban columns and their roles:
-
-| Column | Who moves here | Meaning |
-|--------|---------------|---------|
-| **Ready** | Human | Issue is queued for the agent |
-| **In progress** | Agent | Agent is actively working |
-| **In review** | Agent | Agent is finished, awaiting human review |
-| **Done** | Human | Human accepted the result |
-
-- The agent picks up issues in **Ready** or **In progress** (active states).
-- When done, the agent moves the issue to **In review** and stops.
-- A human reviews and either moves to **Done** (accepted) or back to **In progress** (rework needed).
-- If moved back to **In progress**, the agent picks it up again and reads review comments for feedback.
-
-### GitHub tracker configuration reference
+### GitHub tracker fields
 
 | Field | Required | Default | Description |
-|-------|----------|---------|-------------|
+|---|---|---|---|
 | `tracker.kind` | yes | — | Must be `github_project` |
 | `tracker.project_owner` | yes | — | GitHub username or org owning the project |
 | `tracker.project_number` | yes | — | Project number (from the project URL) |
@@ -331,10 +214,10 @@ The expected kanban columns and their roles:
 | `tracker.terminal_states` | no | `["Closed", "Cancelled", ...]` | Column names that stop agents |
 | `tracker.assignee` | no | all | Filter to issues assigned to a user (`me` or a login) |
 
-### Claude Code agent configuration reference
+### Claude Code agent fields
 
 | Field | Required | Default | Description |
-|-------|----------|---------|-------------|
+|---|---|---|---|
 | `claude.model` | no | `claude-sonnet-4-6` | Claude model to use |
 | `claude.fallback_model` | no | — | Fallback model when primary is overloaded |
 | `claude.max_budget_usd` | no | — | Cost cap per agent turn |
@@ -346,70 +229,198 @@ The expected kanban columns and their roles:
 | `claude.turn_timeout_ms` | no | `3600000` | Absolute turn deadline (ms) |
 | `claude.stall_timeout_ms` | no | `300000` | Kill agent if no events for this long (ms) |
 
+### Codex agent fields
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `codex.command` | no | `codex app-server` | Shell command to start the Codex app server |
+| `codex.approval_policy` | no | `{"reject":{...}}` | Approval policy passed to Codex |
+| `codex.thread_sandbox` | no | `workspace-write` | Sandbox level: `read-only`, `workspace-write`, `danger-full-access` |
+| `codex.turn_sandbox_policy` | no | workspace-scoped | Sandbox policy map passed through to Codex |
+
+### General agent fields
+
+| Field | Required | Default | Description |
+|---|---|---|---|
+| `agent.default` | no | `claude` | Default agent backend (`claude` or `codex`) |
+| `agent.max_concurrent_agents` | no | `10` | Max parallel agent processes |
+| `agent.max_turns` | no | `20` | Max back-to-back turns per agent invocation |
+| `agent.routing.claude_label` | no | `claude` | Issue label that routes to Claude Code |
+| `agent.routing.codex_label` | no | `codex` | Issue label that routes to Codex |
+
+### Workflow file notes
+
+- If the Markdown body is blank, Symphony uses a default prompt template with the issue identifier, title, and body.
+- `hooks.after_create` bootstraps a fresh workspace (e.g., `git clone ... .`).
+- Path values expand `~` to the home directory and `$VAR` from the environment.
+- If the workflow file is missing or has invalid YAML at startup, Symphony does not boot.
+- If a reload fails at runtime, Symphony keeps the last known good config and logs the error.
+
 ## Web dashboard
 
-The observability UI now runs on a minimal Phoenix stack:
+Enable the Phoenix LiveView dashboard by setting a port:
 
-- LiveView for the dashboard at `/`
-- JSON API for operational debugging under `/api/v1/*`
-- Bandit as the HTTP server
-- Phoenix dependency static assets for the LiveView client bootstrap
+```yaml
+server:
+  port: 8080
+```
 
-## Project Layout
+Or via CLI: `./bin/symphony --port 8080`
 
-- `lib/`: application code and Mix tasks
-- `test/`: ExUnit coverage for runtime behavior
-- `WORKFLOW.md`: in-repo workflow contract used by local runs
-- `../.codex/`: repository-local Codex skills and setup helpers
+Available endpoints:
+
+| Path | Description |
+|---|---|
+| `/` | LiveView dashboard with real-time agent status |
+| `/api/v1/state` | JSON snapshot of all tracked issues |
+| `/api/v1/<issue_identifier>` | JSON detail for a single issue |
+| `/api/v1/refresh` | Force a tracker poll |
+
+## Project layout
+
+```
+lib/
+  symphony_elixir/          # Core application
+    claude/app_server.ex    # Claude Code agent backend
+    codex/app_server.ex     # Codex agent backend
+    github/                 # GitHub Projects V2 tracker
+    config.ex               # Runtime configuration from WORKFLOW front matter
+    orchestrator.ex         # Main supervision and issue lifecycle
+    agent_runner.ex         # Agent process management
+    workspace.ex            # Workspace creation and cleanup
+    workflow.ex             # WORKFLOW.md parsing
+  symphony_elixir_web/      # Phoenix web dashboard
+    live/dashboard_live.ex  # LiveView dashboard
+    controllers/            # JSON API endpoints
+config/                     # Phoenix application config
+test/                       # ExUnit tests
+priv/static/                # Static assets
+```
 
 ## Testing
+
+Run the full quality gate (format check, lint, tests with coverage, dialyzer):
 
 ```bash
 make all
 ```
 
-Run the real external end-to-end test only when you want Symphony to create disposable Linear
-resources and launch a real `codex app-server` session:
+Individual targets:
 
 ```bash
-cd elixir
-export LINEAR_API_KEY=...
-make e2e
+make test        # unit tests
+make lint        # credo --strict + @spec check
+make fmt         # format code
+make fmt-check   # check formatting without modifying
+make coverage    # tests with coverage report
+make dialyzer    # static type analysis
 ```
 
-Optional environment variables:
+## Troubleshooting
 
-- `SYMPHONY_LIVE_LINEAR_TEAM_KEY` defaults to `SYME2E`
-- `SYMPHONY_LIVE_SSH_WORKER_HOSTS` uses those SSH hosts when set, as a comma-separated list
+### `:crypto` module not available
 
-`make e2e` runs two live scenarios:
-- one with a local worker
-- one with SSH workers
+```
+** (UndefinedFunctionError) function :crypto.strong_rand_bytes/1 is undefined
+   (module :crypto is not available)
+```
 
-If `SYMPHONY_LIVE_SSH_WORKER_HOSTS` is unset, the SSH scenario uses `docker compose` to start two
-disposable SSH workers on `localhost:<port>`. The live test generates a temporary SSH keypair,
-mounts the host `~/.codex/auth.json` into each worker, verifies that Symphony can talk to them
-over real SSH, then runs the same orchestration flow against those worker addresses. This keeps
-the transport representative without depending on long-lived external machines.
+Erlang was compiled without OpenSSL support. Install the development headers and rebuild:
 
-Set `SYMPHONY_LIVE_SSH_WORKER_HOSTS` if you want `make e2e` to target real SSH hosts instead.
+```bash
+# Ubuntu/Debian
+sudo apt install libssl-dev
 
-The live test creates a temporary Linear project and issue, writes a temporary `WORKFLOW.md`, runs
-a real agent turn, verifies the workspace side effect, requires Codex to comment on and close the
-Linear issue, then marks the project completed so the run remains visible in Linear.
+# macOS
+brew install openssl
+
+# Then reinstall Erlang
+mise uninstall erlang
+mise install
+```
+
+### `gh auth` missing project scope
+
+```
+Error: GraphQL: Resource not accessible by personal access token
+```
+
+Refresh your GitHub token with the required scope:
+
+```bash
+gh auth refresh -s project
+```
+
+### Claude CLI not authenticated
+
+If agents fail immediately, ensure the `claude` CLI is authenticated:
+
+```bash
+# Interactive (with browser)
+claude auth login
+
+# Headless (token-based)
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN="your-token"
+```
+
+### Workflow file errors at startup
+
+```
+** Symphony does not boot
+```
+
+The YAML front matter in your workflow file is invalid. Validate it:
+
+```bash
+mise exec -- mix run -e 'IO.inspect(YamlElixir.read_from_file!("WORKFLOW.github.md"))'
+```
+
+### Agent stalls or times out
+
+Agents have two timeout controls in the workflow config:
+
+- `claude.turn_timeout_ms` (default: 3,600,000ms / 1 hour) — absolute deadline per turn
+- `claude.stall_timeout_ms` (default: 300,000ms / 5 minutes) — kills the agent if no events are received
+
+Lower these values if you want faster failure detection. Check logs for details:
+
+```bash
+./run-github.sh --logs
+```
+
+### Workspace permission errors
+
+Symphony creates workspaces under the configured `workspace.root`. Ensure the directory exists and is writable:
+
+```bash
+mkdir -p ~/code/symphony-workspaces
+```
+
+### Port already in use
+
+If the web dashboard fails to start, another process may be using the port:
+
+```bash
+lsof -i :<port>
+# Or choose a different port
+./bin/symphony --port 8081
+```
 
 ## FAQ
 
 ### Why Elixir?
 
-Elixir is built on Erlang/BEAM/OTP, which is great for supervising long-running processes. It has an
-active ecosystem of tools and libraries. It also supports hot code reloading without stopping
-actively running subagents, which is very useful during development.
+Elixir runs on Erlang/BEAM/OTP, which excels at supervising long-running processes. It supports hot code reloading without stopping active agents, which is useful during development.
 
-### What's the easiest way to set this up for my own codebase?
+### How do I set this up for my own codebase?
 
-Launch `codex` in your repo, give it the URL to the Symphony repo, and ask it to set things up for
-you.
+1. Fork or clone this repo
+2. Copy `WORKFLOW.github.md` into your project and customize it
+3. Set up a GitHub Projects V2 board with the expected columns
+4. Run `./run-github.sh`
+
+See the [Setup](#setup) section for detailed steps.
 
 ## License
 
