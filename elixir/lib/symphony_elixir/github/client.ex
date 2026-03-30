@@ -264,8 +264,8 @@ defmodule SymphonyElixir.GitHub.Client do
 
   defp normalize_project_item(%{"content" => content, "fieldValueByName" => status_field}, tracker, assignee_filter)
        when is_map(content) do
-    # Skip DraftIssues and PullRequests (they lack a number)
-    if content["number"] == nil do
+    # Skip DraftIssues/PullRequests (no number) and closed GitHub issues
+    if content["number"] == nil or content["state"] == "CLOSED" do
       nil
     else
       repo = get_in(content, ["repository", "nameWithOwner"]) || ""
